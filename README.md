@@ -1,6 +1,6 @@
 # Flower
 
-🌷 **Flower = flow + er** —— 一条链接进去，一条流出来。
+🌷 **Flower = flow + er** —— 分流下载，合流落盘。
 
 > *Feed it a URL. It asks the server how big the file is and whether it does ranges, splits that one
 > stream into several, and writes them into a single file in place. A stream that dies costs its own
