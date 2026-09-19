@@ -25,8 +25,8 @@ PROGRESS_STEP_BYTES = 1024 * 1024
 class DownloadWorker(QObject):
     """Runs one probe-and-fetch — or the rest of a paused one — and reports back."""
 
-    probed = Signal(str, int, bool)  # file name, connections it will use, ranges supported
-    progressed = Signal(int, int)  # bytes on disk, total (0 when the server never said)
+    probed = Signal(str, int, bool)  # file name, connections it can use, ranges supported
+    progressed = Signal(int, int, int)  # bytes on disk, total (0 = unknown), live streams
     finished = Signal(str)  # where the file landed
     stopped = Signal(bool)  # True: paused, part kept. False: cancelled, part gone
     failed = Signal(str)
@@ -49,6 +49,7 @@ class DownloadWorker(QObject):
         self._thread: threading.Thread | None = None
         self._last_emit = 0.0
         self._last_done = 0
+        self._last_streams = 0
 
     @property
     def task(self) -> Task | None:
@@ -96,11 +97,12 @@ class DownloadWorker(QObject):
         else:
             self.finished.emit(str(landed))
 
-    def _report(self, done: int, total: int | None) -> None:
+    def _report(self, done: int, total: int | None, streams: int) -> None:
         now = time.monotonic()
         quiet = now - self._last_emit < PROGRESS_INTERVAL_S
-        if quiet and done - self._last_done < PROGRESS_STEP_BYTES:
+        if quiet and done - self._last_done < PROGRESS_STEP_BYTES and streams == self._last_streams:
             return
         self._last_emit = now
         self._last_done = done
-        self.progressed.emit(done, total or 0)
+        self._last_streams = streams
+        self.progressed.emit(done, total or 0, streams)

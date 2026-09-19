@@ -47,9 +47,9 @@ def test_windows_never_make_a_window_smaller_than_it_is_worth():
     assert windows(8 * WINDOW, 16, WINDOW) == windows(8 * WINDOW, 8, WINDOW)  # capped by size
 
 
-def test_a_dropped_window_resumes_from_its_frontier_not_from_zero(tmp_path):
-    payload = bytes(range(256)) * (2 * 1024)  # 512 KiB = four 128 KiB windows
-    dropped = 2 * WINDOW  # the second window starts here
+def test_a_dropped_piece_resumes_from_its_frontier_not_from_zero(tmp_path):
+    payload = bytes(range(256)) * (2 * 1024)  # 512 KiB, cut into 64 KiB pieces
+    dropped = 2 * WINDOW  # a piece starts here; half of it will be written
     with FakeServer(payload, drop_ranges={dropped}) as server:
         landed = _fetch(server, tmp_path).run()
         assert landed.read_bytes() == payload
@@ -57,7 +57,7 @@ def test_a_dropped_window_resumes_from_its_frontier_not_from_zero(tmp_path):
     # The dropped window's body stopped half way, so the retry asked for the byte
     # the disk had actually reached — this is the whole of "a drop costs a window".
     assert dropped in starts
-    assert dropped + WINDOW in starts  # half of a 128 KiB window reached the disk
+    assert dropped + WINDOW // 2 in starts  # half of that 64 KiB piece reached the disk
     assert not part_path(tmp_path / "blob.bin").exists()
 
 
@@ -75,7 +75,7 @@ def _start_and_pause(server: FakeServer, dest, streams: int = 2) -> tuple[Task, 
     """Start a download and pause it mid-flight; gives back the task and its part file."""
     task = _fetch(server, dest, streams=streams)
     seen: list[int] = []
-    task.watch(lambda done, _total: seen.append(done))
+    task.watch(lambda done, _total, _streams: seen.append(done))
     runner = threading.Thread(target=task.run, daemon=True)
     runner.start()
     _wait_for(lambda: seen and seen[-1] >= 200 * 1024)
@@ -111,6 +111,36 @@ def test_cancelling_a_paused_download_deletes_its_part(tmp_path):
         task.discard()  # 取消 pressed while it sits paused
         assert not part.exists()
         assert not (tmp_path / "blob.bin").exists()
+
+
+def test_a_stalling_link_makes_the_pool_retire_connections(tmp_path):
+    """Stalls are the evidence the count should come down — and it stays down."""
+    payload = bytes(range(256)) * (8 * 1024)  # 2 MiB, cut into 128 KiB pieces
+    stalled = {128 * 1024, 384 * 1024, 640 * 1024}  # three pieces lose their body half way
+    with FakeServer(payload, drop_ranges=stalled, flow_chunk=32768, flow_delay=0.005) as server:
+        task = _fetch(server, tmp_path, streams=4)
+        task.adapt_interval_s = 0.05
+        task.adapt_settle_s = 0.1
+        landed = task.run()
+        assert landed.read_bytes() == payload
+    assert task.stats.stalls > 0, "the dropped bodies were never counted as stalls"
+    assert task.stats.retirements >= 1, "a stalling link kept all its connections"
+    assert not part_path(tmp_path / "blob.bin").exists()
+
+
+def test_a_healthy_link_lets_the_pool_grow_toward_the_cap(tmp_path):
+    """No stalls: the pool is free to add connections, up to what the user asked for."""
+    payload = bytes(range(256)) * (32 * 1024)  # 8 MiB, cut into 64 KiB pieces
+    with FakeServer(payload, flow_chunk=65536, flow_delay=0.02) as server:
+        task = _fetch(server, tmp_path, streams=4)
+        task.min_window_bytes = 64 * 1024
+        task.adapt_interval_s = 0.05
+        task.adapt_settle_s = 0.1
+        landed = task.run()
+        assert landed.read_bytes() == payload
+    assert task.stats.additions >= 1, "a healthy link never grew the pool"
+    assert task.stats.peak_streams > 2, f"the pool peaked at {task.stats.peak_streams}"
+    assert task.stats.retirements == 0
 
 
 def test_a_pause_pressed_during_the_probe_is_not_swallowed(tmp_path):

@@ -75,7 +75,8 @@ class MainPage(QWidget):
         self._state = IDLE
         self._samples: deque[tuple[float, int]] = deque()
         self._total = 0
-        self._streams_used = 0
+        self._streams_live = 0
+        self._streams_planned = 0
         self._degraded = False
         self._toast: InfoBar | None = None
         self._build()
@@ -233,7 +234,8 @@ class MainPage(QWidget):
         if resuming and task is not None:
             # The probe is not run again on a resume, so the stream count it found has
             # to be restored here rather than waited for.
-            self._streams_used = planned_streams(task.found, task.streams)
+            self._streams_planned = planned_streams(task.found, task.streams)
+            self._streams_live = self._streams_planned
             self._degraded = not task.found.ranges
         self._state = RUNNING
         self.status.setText("正在继续…" if resuming else "正在探测链接…")
@@ -258,14 +260,17 @@ class MainPage(QWidget):
     # ── what the download says ──
 
     def _on_probed(self, filename: str, streams: int, ranges: bool) -> None:
-        self._streams_used = streams
+        self._streams_planned = streams
+        self._streams_live = streams
         self._degraded = not ranges
         self.status.setText(f"正在下载 {filename}")
         self.detail.setText(self._detail_line())
 
-    def _on_progress(self, done: int, total: int) -> None:
+    def _on_progress(self, done: int, total: int, streams: int) -> None:
         if total:
             self._total = total
+        if streams:
+            self._streams_live = streams
         now = time.monotonic()
         self._samples.append((now, done))
         while len(self._samples) > 2 and now - self._samples[0][0] > SPEED_WINDOW_S:
@@ -347,7 +352,8 @@ class MainPage(QWidget):
     def _reset_metrics(self) -> None:
         self._samples.clear()
         self._total = 0
-        self._streams_used = 0
+        self._streams_live = 0
+        self._streams_planned = 0
         self._degraded = False
         self.progress.setRange(0, 0)  # busy until the size is known
         self.progress.setValue(0)
@@ -372,10 +378,13 @@ class MainPage(QWidget):
 
     def _detail_line(self) -> str:
         parts: list[str] = []
-        if self._streams_used:
-            parts.append(
-                "该站点不支持分段下载，单流取回" if self._degraded else f"{self._streams_used} 条流"
-            )
+        if self._degraded:
+            parts.append("该站点不支持分段下载，单流取回")
+        elif self._streams_live:
+            if self._streams_live == self._streams_planned:
+                parts.append(f"{self._streams_live} 条流")
+            else:  # the pool added or dropped connections while it ran
+                parts.append(f"{self._streams_live}/{self._streams_planned} 条流")
         speed = self._speed()
         if self._total and speed > 0 and self._samples:
             remaining = max(0, self._total - self._samples[-1][1])
