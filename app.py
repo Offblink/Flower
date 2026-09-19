@@ -10,15 +10,24 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import sys
+from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentIcon, FluentWindow
 
 from flower.config import Settings
 from flower.gui.page import MainPage
 
-APP_ID = "Offblink.Flower"
+APP_ID = "Offblink.Flower"  # the taskbar identity, claimed before any window exists
+ICON = "assets/flower.ico"
 WINDOW_SIZE = (820, 500)
+
+
+def resource_path(*parts: str) -> Path:
+    """A bundled file: unpacked by PyInstaller when frozen, beside the source otherwise."""
+    base = getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent
+    return Path(base).joinpath(*parts)
 
 
 def claim_taskbar_identity() -> None:
@@ -43,7 +52,11 @@ class FlowerWindow(FluentWindow):
 def main() -> int:
     claim_taskbar_identity()
     app = QApplication(sys.argv)
+    icon = QIcon(str(resource_path(ICON)))
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     window = FlowerWindow(Settings.load())
+    window.setWindowIcon(app.windowIcon())
     window.show()
     return app.exec()
 

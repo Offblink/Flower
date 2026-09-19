@@ -5,11 +5,11 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-ruff check --fix flower tests app.py
+ruff check --fix flower tests tools app.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-ruff format --check flower tests app.py
+ruff format --check flower tests tools app.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-ruff check flower tests app.py
+ruff check flower tests tools app.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $env:PYTHONIOENCODING = "utf-8"
 python -m pytest -q

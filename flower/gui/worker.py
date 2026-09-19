@@ -54,10 +54,6 @@ class DownloadWorker(QObject):
     def task(self) -> Task | None:
         return self._task
 
-    @property
-    def running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
-
     def pause(self) -> None:
         """Pause, whether or not the probe has finished building the task yet."""
         self._wanted = "pause"
