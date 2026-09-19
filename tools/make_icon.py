@@ -1,10 +1,13 @@
-"""画出 Flower 的图标：一条流分成四条。
+"""画出 Flower 的图标：🌷 本身（用户点名的字形，不带底）。
 
-每档单独渲染（16/24/32/48/64/128/256），不是把大图缩下来 —— 24 px 以下换简化画法
-（四条支流减成两条、间距放大），否则小尺寸里四条会糊成一块。
+彩色 emoji 只有 Qt6/PySide6 渲得出来（Qt5 只能得单色轮廓），而且必须在真实桌面平台上渲染。
+每档单独渲染（16/24/32/48/64/128/256），不是把大图缩下来；emoji 先在 1024 上画好、按 ink bbox
+裁掉字形自带边距，再按每档的填充率缩进去 —— 小尺寸填充率给大一点，否则 16 px 里看不出来。
+
+底色一开始垫了应用自己的青绿渐变，用户看后否掉：**不要背景**（绿底又丑、和粉花对比度也低）。
+所以这张 .ico 是透明底的纯字形，跟 Fungi 那枚 🍄 一样。
 
 用法：python tools/make_icon.py     → assets/flower.ico + assets/flower-256.png
-注意：必须在真实桌面平台渲染（offscreen 平台什么都画不出来）。
 """
 
 from __future__ import annotations
@@ -14,61 +17,62 @@ from pathlib import Path
 
 from PIL import Image
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QLinearGradient, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter
 
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-ACCENT_LIGHT = "#2dd4bf"
-ACCENT_DARK = "#0f766e"
+EMOJI = "\U0001f337"  # 🌷
+EMOJI_FONT = "Segoe UI Emoji"
+CANVAS = 1024  # the emoji is drawn once, big, then cropped to its ink
 
 
-def render(size: int) -> QImage:
-    """One size, drawn at that size: rounded tile behind, the split stream on top."""
+def glyph() -> QImage:
+    """The tulip on its own, cropped to the pixels that are actually painted."""
+    font = QFont(EMOJI_FONT)
+    font.setPixelSize(int(CANVAS * 0.72))
+    image = QImage(CANVAS, CANVAS, QImage.Format_ARGB32)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setFont(font)
+    painter.setPen(QColor("#000000"))
+    box = QFontMetricsF(font).boundingRect(EMOJI)
+    painter.drawText(
+        QRectF(0, (CANVAS - box.height()) / 2, CANVAS, box.height()),
+        Qt.AlignCenter,
+        EMOJI,
+    )
+    painter.end()
+    return crop_to_ink(image)
+
+
+def crop_to_ink(image: QImage) -> QImage:
+    """Trim the font's own margins: an emoji's box is not its glyph, and the padding
+    differs per glyph, so scaling by the canvas would leave the mark off-centre."""
+    box = to_pillow(image).getbbox()
+    if box is None:
+        return image
+    left, top, right, bottom = box
+    return image.copy(left, top, right - left, bottom - top)
+
+
+def render(size: int, source: QImage) -> QImage:
+    """One size, drawn at that size: the tulip scaled to sit inside the square."""
     image = QImage(size, size, QImage.Format_ARGB32)
     image.fill(Qt.transparent)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-    inset = size * (0.06 if size > 24 else 0.03)
-    tile = QRectF(inset, inset, size - 2 * inset, size - 2 * inset)
-    gradient = QLinearGradient(tile.topLeft(), tile.bottomRight())
-    gradient.setColorAt(0.0, QColor(ACCENT_LIGHT))
-    gradient.setColorAt(1.0, QColor(ACCENT_DARK))
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(gradient)
-    radius = size * 0.22
-    painter.drawRoundedRect(tile, radius, radius)
-
-    painter.setBrush(QColor("#ffffff"))
-    small = size <= 24
-    lane_width = tile.width() * (0.17 if small else 0.09)
-    gap = tile.width() * (0.10 if small else 0.05)
-    lanes = 2 if small else 4
-    span = lanes * lane_width + (lanes - 1) * gap
-    left = tile.center().x() - span / 2
-
-    trunk_width = tile.width() * (0.15 if small else 0.13)
-    painter.drawRect(
-        QRectF(
-            tile.center().x() - trunk_width / 2,
-            tile.top() + tile.height() * 0.16,
-            trunk_width,
-            tile.height() * 0.36,
-        )
-    )
-    # The manifold is what makes it read as one stream splitting rather than as a
-    # colon: without it the trunk and the lanes never touch.
-    painter.drawRect(QRectF(left, tile.top() + tile.height() * 0.50, span, tile.height() * 0.10))
-    for index in range(lanes):
-        painter.drawRect(
-            QRectF(
-                left + index * (lane_width + gap),
-                tile.top() + tile.height() * 0.58,
-                lane_width,
-                tile.height() * 0.26,
-            )
-        )
+    fill = 0.90 if size > 24 else 0.96  # small sizes need every pixel they can get
+    side = size * fill
+    ratio = source.width() / source.height()
+    if ratio >= 1:  # wider than tall: the width is what has to fit
+        width, height = side, side / ratio
+    else:  # taller than wide (the tulip is): the height is
+        width, height = side * ratio, side
+    target = QRectF(size / 2 - width / 2, size / 2 - height / 2, width, height)
+    painter.drawImage(target, source)
     painter.end()
     return image
 
@@ -79,9 +83,14 @@ def to_pillow(image: QImage) -> Image.Image:
 
 
 def main() -> int:
-    QGuiApplication(sys.argv)  # the real platform: offscreen renders nothing at all
+    QGuiApplication(sys.argv)  # the real platform: offscreen renders no emoji at all
     ASSETS.mkdir(parents=True, exist_ok=True)
-    frames = {size: to_pillow(render(size)) for size in SIZES}
+    source = glyph()
+    frames = {size: to_pillow(render(size, source)) for size in SIZES}
+    colours = len(set(frames[256].getdata()))
+    print(f"tulip ink {source.width()}x{source.height()}, distinct colours at 256: {colours}")
+    assert colours > 200, "the emoji came out flat: this platform cannot render colour fonts"
+
     icon_path = ASSETS / "flower.ico"
     frames[256].save(
         icon_path,
@@ -92,7 +101,6 @@ def main() -> int:
     frames[256].save(ASSETS / "flower-256.png")
     with Image.open(icon_path) as written:
         print(f"{icon_path} sizes={sorted(written.ico.sizes())}")
-    print(f"{ASSETS / 'flower-256.png'}")
     return 0
 
 
