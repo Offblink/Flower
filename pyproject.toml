@@ -1,0 +1,56 @@
+[project]
+name = "flower"
+version = "0.1.0"
+description = "把一条流分成几条，同时去取同一份文件"
+requires-python = ">=3.13"
+dependencies = ["PySide6-Fluent-Widgets==1.11.3"]
+
+[project.optional-dependencies]
+dev = ["ruff==0.13.0", "pytest==8.3.5"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "PL",  # pylint
+    "ARG", # unused arguments
+    "PTH", # use pathlib
+    "RET", # return simplification
+]
+ignore = [
+    "E501",    # line length (ruff format already keeps code wrapped)
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments
+    "PLR0915", # too many statements
+    "PLR2004", # magic values (protocol constants)
+    "SIM108",  # ternary instead of if/else (readability)
+    # Chinese prose is this project's house language, in docstrings, comments and
+    # the interface alike; the ambiguous-character rule only pays for itself in an
+    # English codebase, where a fullwidth comma really is a typo.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Qt hands these overrides their names: `closeEvent` and friends stay camelCase
+"app.py" = ["N802"]
+"flower/gui/**" = ["N802"]
+# Tests: deferred imports and throwaway lambda/fixture arguments are idioms here
+"tests/**" = ["PLC0415", "ARG001", "ARG002", "ARG005", "RUF012"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
