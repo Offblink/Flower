@@ -90,9 +90,7 @@ class MainPage(QWidget):
         root.setContentsMargins(30, 26, 30, 26)
         root.setSpacing(12)
         root.addWidget(TitleLabel("Flower", self))
-        root.addWidget(
-            CaptionLabel("喂它一个链接，它把这一条流拆成几条，同时去取同一份文件。", self)
-        )
+        root.addWidget(CaptionLabel("🌷 Flower = flow + er —— 分流下载，合流落盘。", self))
         root.addSpacing(6)
 
         card = CardWidget(self)
