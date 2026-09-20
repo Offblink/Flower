@@ -8,6 +8,7 @@ Flower does not resume across runs and a leftover part is then just litter.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -107,7 +108,10 @@ class MainPage(QWidget):
         self.dir_edit.setText(str(self._settings.resolved_save_dir()))
         browse = PushButton("浏览", card, FluentIcon.FOLDER)
         browse.clicked.connect(self._pick_dir)
-        form.addLayout(_row(card, "保存到", self.dir_edit, browse, fill=True))
+        open_dir = PushButton("打开", card)
+        open_dir.setToolTip("在文件资源管理器里打开这个目录")
+        open_dir.clicked.connect(self._open_dir)
+        form.addLayout(_row(card, "保存到", self.dir_edit, browse, open_dir, fill=True))
 
         self.host_edit = LineEdit(card)
         self.host_edit.setText(self._settings.proxy_host)
@@ -175,6 +179,21 @@ class MainPage(QWidget):
         chosen = QFileDialog.getExistingDirectory(self, "选择保存位置", str(self._current_dir()))
         if chosen:
             self.dir_edit.setText(chosen)
+
+    def _open_dir(self) -> None:
+        """Show the chosen folder in Explorer, whatever state the download is in.
+
+        The folder is only opened, never created: a path the user is still typing
+        should not put a directory tree on disk just because they looked at it.
+        """
+        target = self._current_dir()
+        if not target.is_dir():
+            self._warn("这个目录还不存在", str(target))
+            return
+        try:
+            os.startfile(target)
+        except OSError as error:
+            self._warn("打开目录失败", str(error))
 
     def _on_action(self) -> None:
         if self._state == ENDING:
