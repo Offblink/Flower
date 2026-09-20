@@ -1,6 +1,6 @@
 # Flower
 
-🌷 **Flower = flow + er** —— 一条链接进去，一条流出来。
+🌷 **Flower = flow + er** —— 分流下载，合流落盘。
 
 > *Feed it a URL. It asks the server how big the file is and whether it does ranges, splits that one
 > stream into several, and writes them into a single file in place. A stream that dies costs its own
@@ -90,11 +90,6 @@ pwsh -File scripts/check.ps1     # ruff check --fix → ruff format --check → 
 - 942 MB 那份当天没跑完：镜像在 burst 与长时间停滞之间反复，均值 ~40 KB/s —— 是链路的事，不是工具的事。
 - 自适应本身目前由单测（停滞→减流、健康→涨流）与界面验收覆盖；**这条链路上干净的 A/B 数字还欠着**，
   等链路好的时候补。
-
-## 不做什么
-
-不做跨次续传（关掉应用，part 就是垃圾——暂停留着是为了本次接着下，重开即从零）；不做任务队列；
-不碰 BT/磁力；不注入 cookie 与登录态；不做浏览器扩展；不「绿化」下载站点。
 
 ## 目录结构
 
