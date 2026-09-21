@@ -2,6 +2,8 @@
 """Flower 的打包描述：一只窗口 exe + 一个 _internal。
 
 单面程序，所以没有多 exe 那套：一张脸、一枚图标、一枚 AUMID。
+命令行那一半（`flower/cli.py`）不出 exe —— 它长在有 Python 的地方，
+源码里 `python -m flower` 就跑，装过的话 `flower` 也能用。
 datas 里带 pyproject.toml（版本号的唯一出处）与 assets/flower.ico（窗口/任务栏图标）。
 """
 

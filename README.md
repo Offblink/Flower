@@ -15,6 +15,7 @@
 |---|---|
 | 语言 | Python 3.13 |
 | 界面 | PySide6 6.10.2 + PySide6-Fluent-Widgets 1.11.3（单页 FluentWindow，无侧边栏） |
+| 命令行 | 标准库 `argparse`，复用同一套引擎与落地，不 import Qt |
 | 网络 | 标准库 `urllib`，显式 `ProxyHandler`，不引第三方下载库 |
 | 工具链 | ruff 0.13.0（format 只查不改）+ pytest 8.3.5 |
 
@@ -53,6 +54,36 @@
 按钮就是状态机：开始下载 → 暂停 → 继续；旁边的取消 = 删掉 part（暂停留着，能续）。
 速度是 5 秒滑动窗口差分，剩余时间和进度条同一个数据源，不会各说各话。
 
+## 命令行
+
+同一套引擎，没有窗口：`flower <链接>`（源码里 `python -m flower <链接>`）。
+
+```bash
+flower https://example.com/big.iso -d D:\Downloads -n 8
+flower https://example.com/big.iso --sha256 <hex> --json     # 每行一个事件，给脚本读
+```
+
+| 参数 | 作用 |
+|---|---|
+| `-d/--dir` | 保存到哪个目录（默认取界面里存的那个） |
+| `-n/--streams` | 最多几条连接，1–16（默认取界面里存的那个） |
+| `--proxy HOST:PORT` / `--no-proxy` | 走代理还是直连；都不给就按界面里的开关 |
+| `--sha256` | 取完核对；不符退出码 2，文件保留 |
+| `--json` | 每行一个 JSON 事件：`probe` / `progress` / `done` / `stopped` / `failed` |
+| `-q/--quiet` | 不打印进度，只打印结论 |
+
+退出码就是结论：`0` 落地、`1` 失败、`2` 校验不符、`130` 被中断。Ctrl-C 等于界面上的**取消**——
+进程没了 part 就是垃圾，所以 part 删掉、也不留半截真名文件。
+
+`--json` 的一行：
+
+```json
+{"event": "progress", "done": 45226924, "total": 675509688, "streams": 4, "rate_bps": 432977, "eta_s": 1455.7}
+```
+
+打包只出窗口那一只 exe：命令行**不出 exe**——它要的就是有 Python 的地方，源码里
+`python -m flower` 能跑，`pip install -e .` 之后还能直接用 `flower`。
+
 ## 怎么跑
 
 ```bash
@@ -74,9 +105,11 @@ run.bat                                                          # 或 .venv\Scr
 pwsh -File scripts/check.ps1     # ruff check --fix → ruff format --check → ruff check → pytest
 ```
 
-20 例测试里的假服务器能提供四种形状：正常 `206`、**忽略 Range 回 200 全量**、**身体写一半就断**、
+32 例测试里的假服务器能提供四种形状：正常 `206`、**忽略 Range 回 200 全量**、**身体写一半就断**、
 一律 `416`。据此钉住的都是合同级的性质：并集覆盖率、续传的起点不是 0、`416` 只重探一次、
 停滞会让连接数下来（且不再爬回去）、健康链路会让它上去、暂停留 part 而取消删 part。
+命令行那 12 例钉的是它自己的承诺：退出码就是结论、`--json` 每一行都能被 `json.loads`、
+`--sha256` 真的核对（不符退出码 2 且不删文件）、信号处理器用完放回去。
 
 ## 实机验证（2026-09-19）
 
@@ -102,13 +135,15 @@ Flower/
 │   ├── probe.py           问清三件事：总长、支不支持 Range、文件叫什么
 │   ├── landing.py         part 文件、区间并集、双条件改名
 │   ├── engine.py          分块队列 + 取块线程 + 自适应 + 断点续传
+│   ├── cli.py             命令行那一半：同一套引擎，退出码即结论
+│   ├── __main__.py        `python -m flower …`
 │   └── gui/
 │       ├── page.py        一页界面（四行 + 一个会改名的按钮）
 │       └── worker.py      跑在网络线程里的那半：探测 → 下载 → 回报
 ├── tools/
 │   ├── make_icon.py       逐档渲染 🌷 图标（16/24/32/48/64/128/256）
 │   └── build_exe.py       PyInstaller 打包 + 自检（在 .venv-build 里构建）
-├── tests/                 假服务器 + 20 例合同测试
+├── tests/                 假服务器 + 32 例合同测试
 ├── scripts/check.ps1      门禁
 └── run.bat                双击启动（pythonw，不弹黑框）
 ```

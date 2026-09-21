@@ -5,6 +5,11 @@ description = "把一条流分成几条，同时去取同一份文件"
 requires-python = ">=3.13"
 dependencies = ["PySide6-Fluent-Widgets==1.11.3"]
 
+[project.scripts]
+# 命令行那一半：`flower <链接>`，或源码里 `python -m flower <链接>`。
+# 它只碰引擎与落地，不 import Qt，所以没有界面依赖也能跑。
+flower = "flower.cli:main"
+
 [project.optional-dependencies]
 dev = ["ruff==0.13.0", "pytest==8.3.5"]
 
