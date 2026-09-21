@@ -304,7 +304,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     stats = task.stats if task else None
     digest = ""
     if expect:
-        digest = sha256_of(landed)
+        try:
+            digest = sha256_of(landed)
+        except KeyboardInterrupt:  # hashing a 16 GB file is long enough to be interrupted
+            reporter.say(f"校验被打断，文件已经在 {landed}")
+            reporter.event(
+                "stopped",
+                interrupted=True,
+                done=reporter.done,
+                total=reporter.total,
+                file=str(landed),
+            )
+            return EXIT_STOPPED
         if digest != expect:
             reporter.say(f"校验不符  期望 {expect}\n          实际 {digest}")
             reporter.event(

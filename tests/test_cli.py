@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from flower.cli import EXIT_FAILED, EXIT_HASH, EXIT_OK, main
+from flower.cli import EXIT_FAILED, EXIT_HASH, EXIT_OK, EXIT_STOPPED, main
 from tests.fake_server import FakeServer
 
 PAYLOAD = bytes(range(256)) * 1024  # 256 KiB: one window, and quick in a test run
@@ -140,3 +140,21 @@ def test_the_signal_handler_is_put_back(tmp_path):
     with FakeServer(PAYLOAD) as server:
         _download(server, tmp_path)
     assert signal.getsignal(signal.SIGINT) is before
+
+
+def test_an_interrupt_while_hashing_keeps_the_file_and_still_says_stopped(
+    tmp_path, capsys, monkeypatch
+):
+    """Hashing 16 GB takes long enough to be interrupted; the file is already landed."""
+
+    def boom(_path: Path) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("flower.cli.sha256_of", boom)
+    with FakeServer(PAYLOAD) as server:
+        code = _download(server, tmp_path, "--sha256", "0" * 64)
+        out = capsys.readouterr().out
+    landed = tmp_path / "blob.bin"
+    assert code == EXIT_STOPPED
+    assert landed.read_bytes() == PAYLOAD  # a landed file is not deleted by an interrupt
+    assert str(landed) in out
