@@ -30,6 +30,7 @@ class DownloadWorker(QObject):
     finished = Signal(str)  # where the file landed
     stopped = Signal(bool)  # True: paused, part kept. False: cancelled, part gone
     failed = Signal(str)
+    resumed = Signal(int)  # bytes picked up from an earlier run (never emitted when zero)
 
     def __init__(
         self,
@@ -81,7 +82,8 @@ class DownloadWorker(QObject):
                 self.probed.emit(
                     found.filename, planned_streams(found, self._streams), found.ranges
                 )
-                task = Task(self._client, found, self._dest_dir, self._streams)
+                task = Task(self._client, found, self._dest_dir, self._streams, source=self._url)
+                task.on_resume = self.resumed.emit
                 self._task = task
                 if self._wanted == "pause":
                     task.pause()

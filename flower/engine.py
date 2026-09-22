@@ -49,6 +49,7 @@ RATE_WINDOW_S = 5.0
 POLL_S = 0.1  # how often the supervisor notices the pool is done
 
 Progress = Callable[[int, int | None, int], None]
+Resumed = Callable[[int], None]  # how many bytes a run picked up from an earlier one
 
 
 class RangeRefusedError(NetError):
@@ -224,6 +225,9 @@ class Task:
         adapt_interval_s: float = ADAPT_INTERVAL_S,
         adapt_settle_s: float = ADAPT_SETTLE_S,
         start_streams: int = START_STREAMS,
+        source: str = "",
+        sha256: str = "",
+        resume: bool = True,
     ) -> None:
         self.client = client
         self.found = found
@@ -235,6 +239,11 @@ class Task:
         self.start_streams = max(1, start_streams)
         self.dest = Path(dest_dir) / found.filename
         self.tag = tag or secrets.token_hex(4)
+        self.source = source or found.url  # what the record is matched on across runs
+        self.sha256 = sha256
+        self.resume = resume
+        self.resumed = 0
+        self.on_resume: Resumed | None = None  # told how many bytes were picked up, once
         self.stop = threading.Event()
         self.keep_part = False
         self.live_streams = 1
@@ -260,6 +269,8 @@ class Task:
     def pause(self) -> None:
         """Stop with the part intact: the next run continues from the frontier."""
         self.keep_part = True
+        if self._land is not None:
+            self._land.persist(force=True)  # the note has to be on disk before the stop lands
         self.stop.set()
 
     def cancel(self) -> None:
@@ -300,14 +311,30 @@ class Task:
     def _attempt(self) -> Path | None:
         land = self._land
         if land is None:
-            land = self._land = Landing(self.dest, self.size, self.tag)
-            land.start(fresh=True)
+            land = self._land = Landing(
+                self.dest,
+                self.size,
+                self.tag,
+                source=self.source,
+                sha256=self.sha256,
+                resumable=self.resume,
+            )
+            if land.adopt():
+                self.resumed = land.spans.bytes
+                if self.on_resume is not None:
+                    self.on_resume(self.resumed)
+            else:
+                land.start(fresh=True)
         else:
             land.start(fresh=False)
         try:
             self._fetch(land)
         except BaseException:
-            if not self.keep_part:
+            if self.keep_part or self._paid_for(land):
+                # A failure that already cost bytes keeps them, with the note that says what
+                # they are: the next run of this link continues instead of starting over.
+                land.persist(force=True)
+            else:
                 land.discard()
             raise
         if self.stop.is_set():
@@ -315,6 +342,11 @@ class Task:
                 land.discard()
             return None
         return land.commit()
+
+    @staticmethod
+    def _paid_for(land: Landing) -> bool:
+        """True when the part holds bytes worth keeping; a failure that lost nothing leaves nothing."""
+        return land.spans.bytes > 0
 
     def _reprobe(self) -> None:
         """The file moved under us: ask again, and start the part from scratch."""
@@ -490,9 +522,11 @@ class Task:
                     break
                 began = at
                 handle.write(chunk)
+                handle.flush()  # reported means "out of this handle": the record relies on it
                 at += len(chunk)
                 land.written(began, at)
                 self._progress(land.spans.bytes, self.size, self.live_streams)
+        land.persist()  # note what on disk, so a process that dies here does not cost the piece
 
 
 def _short(land: Landing, start: int, lease: _Lease) -> bool:

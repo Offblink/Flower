@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 from flower.cli import EXIT_FAILED, EXIT_HASH, EXIT_OK, EXIT_STOPPED, main
+from flower.landing import Landing, record_path
+from flower.net import Client
+from flower.probe import probe
 from tests.fake_server import FakeServer
 
 PAYLOAD = bytes(range(256)) * 1024  # 256 KiB: one window, and quick in a test run
@@ -158,3 +161,42 @@ def test_an_interrupt_while_hashing_keeps_the_file_and_still_says_stopped(
     assert code == EXIT_STOPPED
     assert landed.read_bytes() == PAYLOAD  # a landed file is not deleted by an interrupt
     assert str(landed) in out
+
+
+def _leave_a_part(dest: Path, server: FakeServer, written: int = 4096) -> Path:
+    """Exactly what a killed run leaves: a part with real bytes, and the note naming it."""
+    found = probe(Client(), server.url)
+    land = Landing(dest / found.filename, found.size, "dead", source=server.url)
+    assert land.lock.take()
+    land.start(fresh=True)
+    with land.writer(0) as handle:
+        handle.write(PAYLOAD[:written])
+    land.written(0, written)
+    land.persist(force=True)
+    land.lock.release()  # the process is gone, so the claim is gone with it
+    return land.part
+
+
+def test_a_run_continues_the_part_a_dead_run_left(tmp_path, capsys):
+    with FakeServer(PAYLOAD) as server:
+        part = _leave_a_part(tmp_path, server)
+        assert part.exists()
+        code = _download(server, tmp_path, "--json")
+        events = _events(capsys)
+    assert code == EXIT_OK
+    assert (tmp_path / "blob.bin").read_bytes() == PAYLOAD
+    resumed = [event for event in events if event["event"] == "resumed"]
+    assert resumed and resumed[0]["done"] == 4096, "the run said what it was picking up"
+    assert not list(tmp_path.glob("*.part*")), "part, note and claim all go when it lands"
+
+
+def test_fresh_starts_over_instead_of_continuing(tmp_path, capsys):
+    with FakeServer(PAYLOAD) as server:
+        part = _leave_a_part(tmp_path, server)
+        code = _download(server, tmp_path, "--fresh", "--json")
+        events = _events(capsys)
+    assert code == EXIT_OK
+    assert (tmp_path / "blob.bin").read_bytes() == PAYLOAD
+    assert not [event for event in events if event["event"] == "resumed"]
+    assert not part.exists(), "--fresh is also how an outdated part is thrown away"
+    assert not record_path(tmp_path / "blob.bin").exists()

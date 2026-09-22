@@ -1,9 +1,10 @@
 """What Flower remembers between runs: where files go, and how the link is made.
 
 Two things only — the directory the user last chose, and how to connect (proxy,
-stream count). A download's own state belongs to the task that owns it, because
-Flower deliberately does not resume across runs: close it and the part file is
-dead weight, so nothing here tries to remember one.
+stream count). A download's own state does not belong here: it lives next to the
+file being fetched, as the part plus the note beside it, so a run that dies takes
+nothing with it. Settings are about how Flower behaves, not about what is half
+downloaded.
 """
 
 from __future__ import annotations

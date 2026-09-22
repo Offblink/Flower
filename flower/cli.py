@@ -12,10 +12,12 @@ Three things are deliberately the command line's own:
   `--json` emits the same events as one object per line for a machine to read.
 * The exit code is the verdict: 0 landed, 1 failed, 2 hash mismatch, 130 stopped.
   A downloader that always exits 0 teaches the caller to ignore it.
-* Ctrl-C means 取消, the same thing the window does when it closes: the pool is
-  asked to stop through the engine's own switch, so the part goes away and no
-  half file is left behind. Flower does not resume across runs, so a part filed
-  under a dead process would only be litter.
+* Ctrl-C stops the download and keeps what is on disk: the part and the note beside it
+  stay, so starting the same link again continues from there instead of from zero. A
+  second Ctrl-C leaves at once, and the part is still there. 取消 is the window's
+  button — that is the one that deletes — and `--fresh` is how the command line says
+  the same thing. A download that dies any other way (a crash, a killed process)
+  leaves exactly that same pair behind.
 
 Speed is the same five-second sliding-window difference the window shows, so a
 script and the interface can never disagree about how fast the link is.
@@ -151,12 +153,13 @@ class Reporter:
 
 
 class StopSwitch:
-    """The first Ctrl-C cancels the task; a second one leaves at once.
+    """The first Ctrl-C stops the download and keeps it; a second one leaves at once.
 
     The engine's own stop switch is used rather than letting the exception unwind
-    through the pool: that way the landing is discarded by the same code path the
-    window's 取消 uses, and the workers get joined instead of being killed with
-    the process mid-write.
+    through the pool: that way the landing is handled by the same code path the
+    window's 暂停 uses, and the workers get joined instead of being killed with
+    the process mid-write. What is left behind is the part plus the note beside it,
+    so running the same link again continues instead of starting over.
     """
 
     def __init__(self, reporter: Reporter) -> None:
@@ -186,8 +189,8 @@ class StopSwitch:
             signal.signal(signal.SIGINT, signal.default_int_handler)
             raise KeyboardInterrupt
         self.asked = True
-        self.reporter.say("正在取消…（part 会删掉：Flower 不跨次续传）")
-        self.task.cancel()
+        self.reporter.say("已中断，part 保留：下次下同一个链接会接着下（要扔掉它用 --fresh）")
+        self.task.pause()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -211,6 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--proxy", metavar="HOST:PORT", help="走这个代理（例如 127.0.0.1:7897）")
     route.add_argument("--no-proxy", action="store_true", help="直连，不管界面里的代理开着没有")
     parser.add_argument("--sha256", metavar="HEX", help="取完核对这个 sha256，不符则退出码 2")
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="不要接着上次下：删掉留下的 part，从头开始（默认会接着下）",
+    )
     parser.add_argument("--json", action="store_true", help="每行一个 JSON 事件，给脚本读")
     parser.add_argument("-q", "--quiet", action="store_true", help="不打印进度，只打印结论")
     parser.add_argument(
@@ -272,7 +280,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             dir=str(dest_dir),
             proxy=proxy,
         )
-        task = Task(client, found, dest_dir, streams)
+        task = Task(
+            client, found, dest_dir, streams, source=args.url, sha256=expect, resume=not args.fresh
+        )
+
+        def _picked_up(picked: int) -> None:
+            reporter.say(f"续传    上次留下 {human_bytes(picked)}，从这里接着下")
+            reporter.event("resumed", done=picked, total=found.size)
+
+        task.on_resume = _picked_up
         task.watch(reporter.progress)
         stopper.install()
         try:
@@ -291,7 +307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     elapsed = time.monotonic() - started
     if landed is None:
-        reporter.say("已取消，未完成的 part 已经删掉了" if stopper.asked else "已停止")
+        reporter.say("已中断，part 保留着（用 --fresh 从头下）" if stopper.asked else "已停止")
         reporter.event(
             "stopped",
             interrupted=stopper.asked,

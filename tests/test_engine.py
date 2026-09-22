@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from flower.engine import RangeRefusedError, Task, planned_streams, windows
-from flower.landing import part_path
+from flower.landing import PartRecord, part_path
 from flower.net import Client
 from flower.probe import Probe, probe
 from tests.fake_server import FakeServer
@@ -34,6 +34,32 @@ def _wait_for(predicate, timeout: float = 10.0) -> None:
             return
         time.sleep(0.02)
     raise AssertionError("timed out waiting for the download to get there")
+
+
+def _requested_bytes(headers: list[str]) -> int:
+    """How many bytes the recorded Range headers add up to — "did it start over?" as a number."""
+    total = 0
+    for header in headers:
+        first, _, last = header.split("=", 1)[1].partition("-")
+        if first and last:
+            total += int(last) - int(first) + 1
+    return total
+
+
+def _note_frontier(dest: Path) -> int:
+    """How far the note says the covered stretch from byte zero reaches.
+
+    Read from disk, not from the task's own spans: the note is throttled (a few seconds, or one
+    piece), and what a new run can act on is only ever what the note says.
+    """
+    note = PartRecord.read(dest)
+    assert note is not None, "a killed run must leave a note"
+    at = 0
+    for first, last in sorted(note.spans):
+        if first > at:
+            break
+        at = last
+    return at
 
 
 def test_windows_never_make_a_window_smaller_than_it_is_worth():
@@ -101,6 +127,36 @@ def test_pause_keeps_the_part_and_resume_fetches_only_the_rest(tmp_path):
 
     assert 0 not in resumed, "the resumed download asked for byte zero again"
     assert min(resumed) > 0
+
+
+def test_a_part_left_by_a_dead_process_is_continued_by_the_next_run(tmp_path):
+    """A run killed without going through 取消 is not a lost download: the note carries it.
+
+    `first._land.lock.release()` is the process boundary — when the process dies the kernel
+    drops the claim, which is the one thing a test cannot otherwise do in-process.
+    """
+    payload = bytes(range(256)) * (8 * 1024)  # 2 MiB
+    with FakeServer(payload, flow_chunk=8192, flow_delay=0.004) as server:
+        first, part = _start_and_pause(server, tmp_path, streams=1)
+        assert part.exists()
+        assert first.resumed == 0  # it started from nothing, as a first run does
+        frontier = _note_frontier(tmp_path / "blob.bin")  # where a resumed run has to start
+        first._land.lock.release()  # the process is gone: nothing claims the destination now
+
+        server.flow_chunk = 0
+        server.flow_delay = 0.0
+        before = len(server.range_starts())
+        second = _fetch(server, tmp_path, streams=1)  # a new run, nothing carried in memory
+        landed = second.run()
+        resumed = server.range_starts()[before:]
+        fetched = _requested_bytes(server.requests_of("GET")[before:])
+
+    assert landed.read_bytes() == payload
+    assert second.resumed > 0, "the new run knew how much was already on disk"
+    assert resumed[0] == frontier > 0, "it asked from the part's first gap, not from zero"
+    assert 0 not in resumed
+    assert fetched < len(payload), "the new run did not fetch the whole file again"
+    assert not part_path(tmp_path / "blob.bin").exists()
 
 
 def test_cancelling_a_paused_download_deletes_its_part(tmp_path):

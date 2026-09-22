@@ -3,7 +3,7 @@
 Minimal on purpose — no animation, no decoration, no second page. The button is
 the state machine: 开始下载 → 暂停 → 继续, with 取消 beside it. Pause keeps the
 part so the next run costs only the missing stretch; cancel deletes it, because
-Flower does not resume across runs and a leftover part is then just litter.
+that is what the user asked for when they pressed it.
 """
 
 from __future__ import annotations
@@ -263,18 +263,26 @@ class MainPage(QWidget):
         worker.finished.connect(self._on_finished)
         worker.stopped.connect(self._on_stopped)
         worker.failed.connect(self._on_failed)
+        worker.resumed.connect(self._on_resumed)
         worker.start()
 
     def shutdown(self) -> None:
-        """The window is going away: stop the download and leave no part behind."""
+        """The window is going away: pause, so what is on disk is still there next time.
+
+        Closing is not 取消. The part, the note beside it and the claim are left alone,
+        and starting the same link again continues from them; 取消 is the button that
+        deletes, and still does.
+        """
         worker = self._worker
         if worker is not None:
-            worker.cancel()  # a part filed under no task would never be resumed anyway
-            worker.join(1.0)
-        if self._task is not None:
-            self._task.discard()
+            worker.pause()
+            worker.join(5.0)
 
     # ── what the download says ──
+
+    def _on_resumed(self, picked: int) -> None:
+        """An earlier run left a part: say so, or the bar looks like it started at 40%."""
+        self.status.setText(f"接着上次下（已有 {_human(picked)}）")
 
     def _on_probed(self, filename: str, streams: int, ranges: bool) -> None:
         self._streams_planned = streams
